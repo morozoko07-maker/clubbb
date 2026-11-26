@@ -422,7 +422,7 @@ body.leaving main { opacity: .35; transform: scale(.95); filter: blur(8px) satur
 .shrink-note { display: block; margin-top: 4px; }
 [data-theme="mono"] .hl { border-radius: 0; }
 [data-theme="mono"] .hl-photo img { filter: grayscale(1) contrast(1.08); transition: filter .6s, transform 1s cubic-bezier(.2,.8,.2,1); }
-[data-theme="mono"] .hl-photo:hover img { filter: none; }
+
 [data-theme="mono"] .hl h3, [data-theme="mono"] .moments-head h2 { font-family: var(--serif); font-weight: 400; letter-spacing: .03em; }
 [data-theme="mono"] .hl-winners li span { color: #fff; }
 
@@ -476,8 +476,8 @@ html[data-potato] .menu-open .menu { visibility: visible; }
 html[data-potato] .menu-list li, html[data-potato] .menu-row a { opacity: 1; transform: none; filter: none; }
 html[data-potato] .stage-word .ch > span { transform: none; }
 html[data-potato] .stage-script { opacity: 1; }
-html[data-potato] .door::before { display: none; }
-html[data-potato] .door:hover { background: color-mix(in srgb, var(--flower) 16%, transparent); }
+
+
 
 /* ------------------------------------------------------------ v6: photo cards, wide covers, smoother */
 .card3d { will-change: transform, opacity; contain: layout paint; }
@@ -576,3 +576,4 @@ html[data-potato][data-theme="mono"] [data-branch]::before { background-size: 10
 .vine-bud .vl-in { transform-origin: center bottom; }
 [data-theme="rosenoir"] .doors { background: transparent; }
 [data-theme="rosenoir"] .door { background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.themes button:not([aria-pressed="true"]):hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); }
