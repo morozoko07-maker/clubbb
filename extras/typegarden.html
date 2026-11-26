@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Type Garden</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  * { box-sizing: border-box; }
+  #app { position: fixed; inset: 0; cursor: text; font-family: 'DM Mono', ui-monospace, monospace; -webkit-tap-highlight-color: transparent; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .bar { position: absolute; left: 24px; right: 24px; bottom: 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; font-size: 12px; letter-spacing: .04em; opacity: .65; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  .hints { display: flex; gap: 18px; flex-wrap: wrap; }
+  .ctrls { display: flex; gap: 8px; align-items: center; }
+  .pal { display: flex; gap: 6px; align-items: center; padding: 4px 6px; border: 1px solid #3a3a3a; border-radius: 999px; }
+  .sw { width: 22px; height: 22px; padding: 0; border-radius: 999px; cursor: pointer; border: 1.5px solid transparent; display: grid; place-items: center; transition: transform .15s ease; }
+  .sw:hover { transform: scale(1.15); }
+  .sw i { width: 10px; height: 10px; border-radius: 999px; display: block; }
+  .btn { background: transparent; border: 1px solid #3a3a3a; color: #bdbdbd; font: inherit; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+  .btn:hover { border-color: #fff; color: #fff; }
+  .modes { position: absolute; top: 16px; right: 16px; display: flex; gap: 4px; padding: 4px; border: 1px solid #2a2a2a; border-radius: 999px; background: #000; z-index: 3; }
+  .modes button { border: 0; border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 12px; cursor: pointer; }
+  #field { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; pointer-events: none; }
+  @media (max-width: 640px) {
+    .bar { left: 16px; right: 16px; bottom: 14px; gap: 10px; }
+    .hints { gap: 12px; font-size: 11px; }
+    .ctrls { flex: 1 1 100%; justify-content: space-between; }
+    .sw { width: 20px; height: 20px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="cv"></canvas>
+  <div class="modes" id="modes"></div>
+  <div class="bar">
+    <div class="hints">
+      <span>type to grow</span><span>space cuts</span><span>backspace withers</span><span>enter clears</span>
+    </div>
+    <div class="ctrls">
+      <div class="pal" id="pal"></div>
+      <button class="btn" id="png" type="button">PNG</button>
+      <button class="btn" id="motion" type="button">Breathe</button>
+    </div>
+  </div>
+  <input id="field" aria-label="Type to grow a garden" autocapitalize="off" autocomplete="off" spellcheck="false">
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const FONT = '"Playfair Display", Georgia, serif';
+  const FLOWERS = ["#FF1400", "#E4002B", "#FF3B1F", "#FF5A4E", "#FF8A00", "#E63CFF", "#FFB7C5"];
+  const PALETTES = [
+    { name: "Rose noir", bg: "#000000", flower: "#FF1400", stem: "#3257FF", line: "#FFB4A8", text: "#FFFFFF" },
+    { name: "Paper", bg: "#F3EEE4", flower: "#FF3B1F", stem: "#1C2B8F", line: "#FFD2C4", text: "#111111" },
+    { name: "Midnight", bg: "#0D1B4C", flower: "#FF5A4E", stem: "#9FB4FF", line: "#FFD6CF", text: "#FFFFFF" },
+    { name: "Citrus", bg: "#0E1A12", flower: "#FF8A00", stem: "#1FA463", line: "#FFE2B8", text: "#FFF6E8" },
+    { name: "Orchid", bg: "#140A1F", flower: "#E63CFF", stem: "#2FB8A6", line: "#F9D1FF", text: "#FFFFFF" },
+    { name: "Moss", bg: "#133A2A", flower: "#FFB7C5", stem: "#7FD18B", line: "#FFFFFF", text: "#F6F1E7" },
+    { name: "Tomato", bg: "#FF1400", flower: "#FFF1E0", stem: "#0B0B0B", line: "#FF1400", text: "#000000" },
+    { name: "Mono", bg: "#000000", flower: "#F2F2F2", stem: "#6E6E6E", line: "#000000", text: "#FFFFFF" }
+  ];
+  const MOTIONS = [
+    { id: "breathe", label: "Breathe" },
+    { id: "breeze", label: "Breeze" },
+    { id: "bloom", label: "Bloom" },
+    { id: "still", label: "Still" }
+  ];
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const state = { palette: 0, motion: "breathe", letters: [], uid: 1, W: 0, H: 0, S: 0, dpr: 1, mx: null, my: null, lastKey: 0 };
+
+  // ---------- utils ----------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const easeOut = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+  const easeInOut = t => { t = clamp(t, 0, 1); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+  function hash(n) { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); }
+  function rng(seed) { let s = seed | 0; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+  function pal() { return PALETTES[state.palette]; }
+
+  function measure(ch) {
+    ctx.font = "700 100px " + FONT;
+    let w = ctx.measureText(ch).width / 100;
+    if (ch === " ") w *= 1.35;
+    return w;
+  }
+
+  // ---------- layout ----------
+  function layout() {
+    const A = state.letters.filter(l => !l.dead);
+    const W = state.W, H = state.H;
+    if (!W) return;
+    const ws = A.map(l => measure(l.ch));
+    const maxW = W * 0.8;
+    // choose a size that fits, then wrap if needed
+    let S = H * 0.26;
+    let lines = [A.map((_, i) => i)];
+    const lineWidth = (idx, s) => idx.reduce((acc, i) => acc + ws[i], 0) * s;
+    if (lineWidth(lines[0], S) > maxW) {
+      // wrap words
+      const words = [];
+      let cur = [];
+      A.forEach((l, i) => {
+        if (l.ch === " ") { if (cur.length) words.push(cur); words.push([i]); cur = []; }
+        else cur.push(i);
+      });
+      if (cur.length) words.push(cur);
+      const wrap = s => {
+        const out = [[]]; let w = 0;
+        for (const word of words) {
+          const ww = word.reduce((a, i) => a + ws[i], 0) * s;
+          const isSpace = word.length === 1 && A[word[0]].ch === " ";
+          if (!isSpace && w > 0 && w + ww > maxW) { out.push([]); w = 0; }
+          out[out.length - 1].push(...word); w += ww;
+        }
+        return out;
+      };
+      let lo = H * 0.04, hi = H * 0.22;
+      for (let k = 0; k < 18; k++) {
+        const mid = (lo + hi) / 2, ls = wrap(mid);
+        const fits = ls.every(li => lineWidth(li, mid) <= maxW) && ls.length * 2.1 * mid <= H * 0.78;
+        if (fits) lo = mid; else hi = mid;
+      }
+      S = lo; lines = wrap(S);
+      if (lines.length < 2) { S = Math.min(H * 0.26, maxW / Math.max(0.001, lineWidth(lines[0], 1))); }
+    } else {
+      S = Math.min(H * 0.26, maxW / Math.max(0.001, lineWidth(lines[0], 1)));
+    }
+    state.S = S;
+    const lh = 2.1 * S;
+    lines.forEach((li, k) => {
+      let x = W / 2 - lineWidth(li, S) / 2;
+      const y = H / 2 + (k - (lines.length - 1) / 2) * lh + 0.33 * S;
+      li.forEach(i => {
+        const l = A[i], w = ws[i] * S;
+        l.tx = x + w / 2; l.ty = y; l.tw = w;
+        if (l.x == null) { l.x = l.tx; l.y = l.ty; }
+        x += w;
+      });
+    });
+  }
+
+  // ---------- growth ----------
+  function stemPts(base, dir, len, bend, waves, ph, n) {
+    const P = [[base[0], base[1]]];
+    let x = base[0], y = base[1];
+    const step = len / n;
+    for (let i = 1; i <= n; i++) {
+      const u = i / n;
+      const a = dir + bend * u + Math.sin(u * Math.PI * waves + ph) * 0.18 * Math.min(1, u * 3);
+      x += Math.cos(a) * step; y += Math.sin(a) * step;
+      P.push([x, y]);
+    }
+    return P;
+  }
+
+  function genLetter(l) {
+    const r = rng(l.id * 7919 + 13);
+    const w = measure(l.ch);
+    const els = [];
+    const up = 1 + (r() < 0.4 ? 1 : 0);
+    for (let i = 0; i < up; i++) {
+      const base = [(r() - 0.5) * w * 0.7, -r() * 0.25];
+      const dir = -Math.PI / 2 + (r() - 0.5) * 0.7;
+      const len = 0.55 + r() * 0.5;
+      const pts = stemPts(base, dir, len, (r() - 0.5) * 0.8, 1 + r() * 1.4, r() * 6.28, 34);
+      const layer = r() < 0.45 ? 1 : 0;
+      els.push({ t: "stem", pts, layer, d0: 30 + i * 120, dur: 500 + len * 350 });
+      const leaves = Math.floor(r() * 3);
+      let side = r() < 0.5 ? -1 : 1;
+      for (let k = 0; k < leaves; k++) {
+        const u = 0.3 + r() * 0.55;
+        const idx = Math.min(pts.length - 1, Math.round(u * (pts.length - 1)));
+        const p = pts[idx], p2 = pts[Math.min(pts.length - 1, idx + 1)];
+        const ang = Math.atan2(p2[1] - p[1], p2[0] - p[0]);
+        side = -side;
+        els.push({ t: "leaf", x: p[0], y: p[1], a: ang + side * (0.6 + r() * 0.5), L: 0.16 + r() * 0.2, bend: (r() - 0.5) * 1.2, layer, d0: 30 + i * 120 + (500 + len * 350) * u });
+      }
+      const tip = pts[pts.length - 1];
+      if (r() < 0.62) {
+        els.push({ t: "rose", x: tip[0], y: tip[1], R: 0.12 + r() * 0.13, rot: (r() - 0.5) * 0.8, seed: r() * 100, layer, d0: 30 + i * 120 + (500 + len * 350) * 0.85 });
+      } else {
+        els.push({ t: "leaf", x: tip[0], y: tip[1], a: Math.atan2(tip[1] - pts[pts.length - 3][1], tip[0] - pts[pts.length - 3][0]), L: 0.2 + r() * 0.16, bend: (r() - 0.5), layer, d0: 30 + i * 120 + (500 + len * 350) * 0.9 });
+      }
+    }
+    // connection to the previous letter
+    if (l.prev && r() < 0.5) {
+      const px = -(measure(l.prev.ch) + w) / 2;
+      const a = [(r() - 0.5) * w * 0.5, -0.1 - r() * 0.4];
+      const b = [px + (r() - 0.5) * 0.3, -0.1 - r() * 0.4];
+      const bulge = (r() < 0.5 ? -1 : 1) * (0.35 + r() * 0.35);
+      const P = [];
+      for (let i = 0; i <= 26; i++) {
+        const t = i / 26, u = 1 - t;
+        P.push([
+          u * u * u * a[0] + 3 * u * u * t * (a[0] + (b[0] - a[0]) * 0.2) + 3 * u * t * t * (b[0] - (b[0] - a[0]) * 0.2) + t * t * t * b[0],
+          u * u * u * a[1] + 3 * u * u * t * (a[1] + bulge) + 3 * u * t * t * (b[1] + bulge) + t * t * t * b[1]
+        ]);
+      }
+      els.push({ t: "stem", pts: P, layer: r() < 0.4 ? 1 : 0, d0: 90, dur: 620 });
+    }
+    l.els = els;
+  }
+
+  function addLetter(ch, now) {
+    const A = state.letters.filter(l => !l.dead);
+    const last = A[A.length - 1];
+    if (ch === " ") {
+      if (last && last.ch !== " ") { last.cut = now; }
+      state.letters.push({ ch: " ", id: state.uid++, birth: now, els: [] });
+      layout(); return;
+    }
+    const same = last && last.ch !== " ";
+    const l = { ch, id: state.uid++, birth: now, prev: same ? last : null };
+    genLetter(l);
+    state.letters.push(l);
+    layout();
+  }
+
+  function wither(now) {
+    const A = state.letters.filter(l => !l.dead);
+    const last = A[A.length - 1];
+    if (!last) return;
+    last.dead = now;
+    const prev = A[A.length - 2];
+    if (prev && prev.ch !== " ") prev.cut = null;
+    layout();
+  }
+
+  // ---------- drawing ----------
+  function strokePath(g, P, upto, w, col) {
+    if (upto <= 0) return;
+    const n = P.length - 1;
+    const end = upto * n;
+    g.beginPath();
+    g.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i <= n; i++) {
+      if (i > end) {
+        const f = end - (i - 1);
+        const x = P[i - 1][0] + (P[i][0] - P[i - 1][0]) * f;
+        const y = P[i - 1][1] + (P[i][1] - P[i - 1][1]) * f;
+        g.lineTo(x, y); break;
+      }
+      g.lineTo(P[i][0], P[i][1]);
+    }
+    g.strokeStyle = col; g.lineWidth = w; g.lineCap = "round"; g.lineJoin = "round"; g.stroke();
+  }
+
+  function drawLeaf(g, x, y, a, L, bend, col, vein) {
+    if (L <= 0) return;
+    const ca = Math.cos(a), sa = Math.sin(a), px = -sa, py = ca;
+    const at = u => [x + ca * u * L + px * Math.sin(Math.PI * u) * bend * 0.15 * L,
+                     y + sa * u * L + py * Math.sin(Math.PI * u) * bend * 0.15 * L];
+    const hw = u => L * 0.18 * Math.sin(Math.PI * Math.pow(u, 0.8));
+    const N = 10, s1 = [], s2 = [];
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, c = at(u), wv = hw(u);
+      s1.push([c[0] + px * wv, c[1] + py * wv]);
+      s2.push([c[0] - px * wv, c[1] - py * wv]);
+    }
+    const tip = at(1), base = at(0);
+    g.beginPath(); g.moveTo(base[0], base[1]);
+    for (const p of s1) g.lineTo(p[0], p[1]);
+    g.lineTo(tip[0], tip[1]);
+    for (let i = s2.length - 1; i >= 0; i--) g.lineTo(s2[i][0], s2[i][1]);
+    g.closePath(); g.fillStyle = col; g.fill();
+    if (L > 7) {
+      g.beginPath(); g.moveTo(base[0], base[1]);
+      for (let i = 1; i <= 6; i++) { const p = at(0.1 + 0.7 * i / 6); g.lineTo(p[0], p[1]); }
+      g.strokeStyle = vein; g.lineWidth = Math.max(0.7, L * 0.035); g.stroke();
+    }
+  }
+
+  function drawRose(g, x, y, R, rot, seed, p, C) {
+    if (R <= 0.4) return;
+    const r = rng(seed * 977 + 3);
+    const petals = 6;
+    for (let i = 0; i < petals; i++) {
+      const pr = easeOut((p - i * 0.08) / 0.55);
+      if (pr <= 0) continue;
+      const ang = rot + i * 1.05 + r() * 0.2;
+      const rr = R * (0.55 + 0.45 * pr);
+      const ox = Math.cos(ang) * R * 0.32, oy = Math.sin(ang) * R * 0.32;
+      g.save();
+      g.translate(x + ox, y + oy);
+      g.rotate(ang);
+      g.beginPath();
+      g.ellipse(0, 0, rr, rr * 0.72, 0, 0, Math.PI * 2);
+      g.fillStyle = C.flower; g.fill();
+      g.restore();
+    }
+    // centre spiral
+    g.beginPath();
+    const turns = 2.2;
+    for (let i = 0; i <= 40 * p; i++) {
+      const u = i / 40, th = u * turns * Math.PI * 2, rr = R * (0.05 + 0.3 * u);
+      const px = x + Math.cos(th + rot) * rr, py = y + Math.sin(th + rot) * rr * 0.8;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.strokeStyle = C.line; g.lineWidth = Math.max(0.8, R * 0.06); g.stroke();
+  }
+
+  function lean(l, S, t) {
+    if (state.mx == null) return [0, 0];
+    const dx = state.mx - l.x, dy = state.my - (l.y - S * 0.6);
+    const d = Math.hypot(dx, dy), reach = Math.max(260, S * 3.2);
+    if (d < 1 || d > reach) return [0, 0];
+    const w = 1 - d / reach, s = w * w * (3 - 2 * w);
+    return [dx / d * s, dy / d * s];
+  }
+
+  function draw(t) {
+    const C = pal(), S = state.S, W = state.W, H = state.H;
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    if (!S) return;
+
+    const motion = state.motion;
+    const sway = motion === "breathe" ? 1 : motion === "breeze" ? 1.7 : motion === "bloom" ? 0.6 : 0;
+    const boil = motion === "still" ? 0 : Math.floor(t / 120);
+    const amp = motion === "still" ? 0 : Math.max(0.6, S * 0.008);
+
+    const active = state.letters.filter(l => !l.dead);
+    const k = 1 - Math.exp(-16 / 1000 * 16);
+    for (const l of state.letters) {
+      if (l.tx == null) continue;
+      l.x += (l.tx - l.x) * 0.12;
+      l.y += (l.ty - l.y) * 0.12;
+    }
+
+    const drawLayer = layer => {
+      for (const l of state.letters) {
+        if (l.dead && t - l.dead > 400) continue;
+        if (l.ch === " " || !l.els) continue;
+        const age = (t - l.birth);
+        const fade = l.dead ? 1 - clamp((t - l.dead) / 380, 0, 1) : 1;
+        if (fade <= 0) continue;
+        const ln = lean(l, S, t);
+        const jx = boil ? (hash(l.id * 1.37 + boil * 7.1) - 0.5) * amp : 0;
+        const jy = boil ? (hash(l.id * 2.71 + boil * 3.1) - 0.5) * amp : 0;
+        const phase = t * 0.0012 + l.id * 0.7;
+        for (const e of l.els) {
+          if (e.layer !== layer) continue;
+          const prog = easeOut((age - e.d0) / e.dur);
+          if (prog <= 0) continue;
+          const localSway = sway ? Math.sin(phase + hash(l.id) * 6.28) * 0.012 * S : 0;
+          if (e.t === "stem") {
+            const P = e.pts.map(([px, py]) => {
+              const hh = clamp(-py / 0.8, 0, 1.6);
+              return [
+                l.x + px * S + jx + (ln[0] * S * 0.1 + localSway) * hh * hh,
+                l.y + py * S + jy + ln[1] * S * 0.05 * hh * hh
+              ];
+            });
+            strokePath(ctx, P, prog * fade, S * 0.022, C.stem);
+          } else if (e.t === "leaf") {
+            const sc = easeOut((age - e.d0) / 520) * fade;
+            if (sc <= 0) continue;
+            drawLeaf(ctx, l.x + e.x * S + jx, l.y + e.y * S + jy, e.a + (sway ? Math.sin(phase) * 0.06 : 0), e.L * S * sc, e.bend, C.stem, C.bg);
+          } else if (e.t === "rose") {
+            const rp = clamp((age - e.d0) / 900, 0, 1);
+            if (rp <= 0) continue;
+            drawRose(ctx, l.x + e.x * S + jx, l.y + e.y * S + jy, e.R * S * fade, e.rot + (sway ? Math.sin(phase + 1) * 0.05 : 0), e.seed, rp, C);
+          }
+        }
+      }
+    };
+
+    drawLayer(0);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.font = "700 " + S + "px " + FONT;
+    for (const l of state.letters) {
+      if (l.ch === " " || l.tx == null) continue;
+      const fade = l.dead ? 1 - clamp((t - l.dead) / 380, 0, 1) : 1;
+      if (fade <= 0) continue;
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = C.text;
+      ctx.fillText(l.ch, l.x, l.y);
+      ctx.globalAlpha = 1;
+    }
+    drawLayer(1);
+
+    // caret
+    const A = state.letters.filter(l => !l.dead);
+    const last = A[A.length - 1];
+    const caretOn = t - state.lastKey < 500 || Math.floor(t / 530) % 2 === 0;
+    if (caretOn) {
+      const x = last ? last.tx + last.tw / 2 + S * 0.07 : W / 2;
+      const y = last ? last.ty - S * 0.33 : H / 2;
+      ctx.fillStyle = C.text;
+      ctx.fillRect(x - Math.max(1, S * 0.015), y - S * 0.4, Math.max(2, S * 0.03), S * 0.8);
+    }
+  }
+
+  // ---------- resize / loop ----------
+  function resize() {
+    state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.W = window.innerWidth;
+    state.H = window.innerHeight;
+    cv.width = Math.round(state.W * state.dpr);
+    cv.height = Math.round(state.H * state.dpr);
+    layout();
+  }
+
+  let raf = 0;
+  function loop(t) {
+    draw(t);
+    raf = requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  function key(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); savePNG(); }
+      return;
+    }
+    if (e.key === "Backspace") { e.preventDefault(); state.lastKey = performance.now(); wither(performance.now()); return; }
+    if (e.key === "Enter") { e.preventDefault(); state.letters = []; layout(); return; }
+    if (e.key.length !== 1) return;
+    e.preventDefault();
+    state.lastKey = performance.now();
+    addLetter(e.key, performance.now());
+  }
+
+  // mobile keyboard
+  const field = document.getElementById("field");
+  let composing = false;
+  field.addEventListener("compositionstart", () => { composing = true; });
+  field.addEventListener("compositionend", () => { composing = false; field.value = ""; });
+  field.addEventListener("input", () => {
+    if (composing) return;
+    const v = field.value;
+    if (!v) return;
+    for (const ch of v) addLetter(ch, performance.now());
+    field.value = "";
+    state.lastKey = performance.now();
+  });
+  document.getElementById("app").addEventListener("click", e => {
+    if (e.target.closest("button")) return;
+    field.focus({ preventScroll: true });
+  });
+
+  // ---------- ui ----------
+  const modesEl = document.getElementById("modes");
+  const palEl = document.getElementById("pal");
+  const motionBtn = document.getElementById("motion");
+
+  function buildUI() {
+    modesEl.innerHTML = "";
+    MOTIONS.forEach(m => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = m.label;
+      b.style.cssText = "background:" + (state.motion === m.id ? "#fff" : "transparent") + ";color:" + (state.motion === m.id ? "#000" : "#bdbdbd");
+      b.addEventListener("click", () => { state.motion = m.id; buildUI(); });
+      modesEl.appendChild(b);
+    });
+    palEl.innerHTML = "";
+    PALETTES.forEach((p, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sw";
+      b.title = p.name;
+      b.setAttribute("aria-label", p.name);
+      b.style.background = p.bg;
+      b.style.borderColor = state.palette === i ? p.text : "#3a3a3a";
+      const dot = document.createElement("i");
+      dot.style.background = p.flower;
+      b.appendChild(dot);
+      b.addEventListener("click", () => { state.palette = i; buildUI(); });
+      palEl.appendChild(b);
+    });
+    motionBtn.textContent = MOTIONS.find(m => m.id === state.motion).label;
+  }
+  motionBtn.addEventListener("click", () => {
+    const i = MOTIONS.findIndex(m => m.id === state.motion);
+    state.motion = MOTIONS[(i + 1) % MOTIONS.length].id;
+    buildUI();
+  });
+
+  function savePNG() {
+    draw(performance.now());
+    cv.toBlob(b => {
+      if (!b) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = "type-garden.png";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    });
+  }
+  document.getElementById("png").addEventListener("click", savePNG);
+
+  // ---------- boot ----------
+  window.addEventListener("keydown", key);
+  window.addEventListener("resize", resize);
+  window.addEventListener("pointermove", e => { state.mx = e.clientX; state.my = e.clientY; });
+  window.addEventListener("pointerleave", () => { state.mx = null; });
+  resize();
+  if (document.fonts) document.fonts.load('700 100px "Playfair Display"').then(() => { layout(); });
+  buildUI();
+  const seed = "in bloom";
+  let i = 0;
+  const growSeed = () => {
+    if (i >= seed.length) return;
+    addLetter(seed[i++], performance.now());
+    setTimeout(growSeed, 160);
+  };
+  setTimeout(growSeed, 300);
+  raf = requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

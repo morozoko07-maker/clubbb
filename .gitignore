@@ -1,0 +1,26 @@
+# local data and secrets (created when the app runs; never commit these)
+clubportal/portal.db
+clubportal/portal.db-*
+clubportal/data/
+clubportal/.admin_key
+clubportal/.secret_key
+clubportal/.campus_code
+.env
+*.log
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# os / editors / tools
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
+.agents/
+.playwright/
+.playwright-cli/
+node_modules/
